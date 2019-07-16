@@ -1,4 +1,4 @@
-package gomongoose
+package gomongooz
 
 /*
 err = User.FindId(user.Id, findUser)

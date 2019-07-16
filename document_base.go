@@ -1,4 +1,4 @@
-package gomongoose
+package gomongooz
 
 import (
 	"encoding/json"

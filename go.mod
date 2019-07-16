@@ -1,4 +1,4 @@
-module github.com/numerums/gomongoose
+module github.com/numerums/gomongoz
 
 go 1.12
 

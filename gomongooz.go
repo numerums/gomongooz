@@ -73,7 +73,7 @@ Persisting a customer instance to the database would result in embedding an comp
 Now that you got some models it is important to create a connection to the database and to register these models for the ODM.
 
 */
-package gomongoose
+package gomongooz
 
 import (
 	"context"
