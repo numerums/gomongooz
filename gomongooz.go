@@ -90,6 +90,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 const REL_11 string = "11" // one-to-one relation
@@ -111,7 +112,7 @@ type (
 	//The "Database" object which stores all connections
 	Connection struct {
 		Config        *Config
-		Session       *mongo.Session
+		Client        *mongo.Client
 		modelRegistry map[string]*Model
 		typeRegistry  map[string]reflect.Type
 	}
@@ -163,7 +164,7 @@ func Connect(config *Config) (*Connection, error) {
 
 	con := &Connection{
 		Config:        config,
-		Session:       nil,
+		Client:        nil,
 		modelRegistry: make(map[string]*Model),
 		typeRegistry:  make(map[string]reflect.Type),
 	}
@@ -194,16 +195,16 @@ func Connect(config *Config) (*Connection, error) {
 	return con, err
 }
 
-func (self *Connection) document(typeName string) IDocumentBase {
+func (connection *Connection) document(typeName string) IDocumentBase {
 
 	typeNameLC := strings.ToLower(typeName)
 
-	if _, ok := self.typeRegistry[typeNameLC]; ok {
+	if _, ok := connection.typeRegistry[typeNameLC]; ok {
 
-		reflectType := self.typeRegistry[typeNameLC]
+		reflectType := connection.typeRegistry[typeNameLC]
 		document := reflect.New(reflectType).Interface().(IDocumentBase)
 
-		self.modelRegistry[typeNameLC].New(document)
+		connection.modelRegistry[typeNameLC].New(document)
 
 		return document
 	}
@@ -225,7 +226,7 @@ func L(key string, values ...interface{}) string {
 }
 
 /*
-To create actions on each collection you have to request a model instance with this method.
+Model : To create actions on each collection you have to request a model instance with this method.
 Make sure that you registered your collections and schemes first, otherwise it will panic.
 
 For example:
@@ -233,20 +234,20 @@ For example:
 
 	User.Find() ...
 */
-func (self *Connection) Model(typeName string) *Model {
+func (connection *Connection) Model(typeName string) *Model {
 
 	typeNameLC := strings.ToLower(typeName)
 
-	if _, ok := self.modelRegistry[typeNameLC]; ok {
+	if _, ok := connection.modelRegistry[typeNameLC]; ok {
 
-		return self.modelRegistry[typeNameLC]
+		return connection.modelRegistry[typeNameLC]
 	}
 
 	panic(fmt.Sprintf("DB: Type '%v' is not registered", typeName))
 }
 
 /*
-It is necessary to register your created models to the ODM to work with. Within this process
+Register : It is necessary to register your created models to the ODM to work with. Within this process
 the ODM creates an internal model and type registry to work fully automatically and consistent.
 Make sure you already created a connection. Registration expects a pointer to an IDocumentBase
 type and the collection name where the documents should be stored in.
@@ -256,7 +257,7 @@ For example:
 	connection.Register(&Message{}, "messages")
 	connection.Register(&Customer{}, "customers")
 */
-func (self *Connection) Register(document IDocumentBase, collectionName string) {
+func (connection *Connection) Register(document IDocumentBase, collectionName string) {
 
 	if document == nil {
 		panic("document can not be nil")
@@ -266,12 +267,12 @@ func (self *Connection) Register(document IDocumentBase, collectionName string) 
 	typeName := strings.ToLower(reflectType.Elem().Name())
 
 	//check if model was already registered
-	if _, ok := self.modelRegistry[typeName]; !ok {
-		collection := self.Session.Database(self.Config.DatabaseName).Collection(collectionName) // empty string returns db name from dial info
-		model := &Model{collection, self}
+	if _, ok := connection.modelRegistry[typeName]; !ok {
+		collection := connection.Client.Database(connection.Config.DatabaseName).Collection(collectionName) // empty string returns db name from dial info
+		model := &Model{collection, connection}
 
-		self.modelRegistry[typeName] = model
-		self.typeRegistry[typeName] = reflectType.Elem()
+		connection.modelRegistry[typeName] = model
+		connection.typeRegistry[typeName] = reflectType.Elem()
 
 		fmt.Sprintf("Registered type '%v' for collection '%v'", typeName, collectionName)
 
@@ -280,9 +281,9 @@ func (self *Connection) Register(document IDocumentBase, collectionName string) 
 	}
 }
 
-//Opens a database connection manually if the config was set.
+//Open : Opens a database connection manually if the config was set.
 //This method gets called automatically from the Connect() method.
-func (self *Connection) Open() (err error) {
+func (connection *Connection) Open() (err error) {
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -299,7 +300,7 @@ func (self *Connection) Open() (err error) {
 
 	// Connect to MongoDB
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(self.Config.DatabaseURI))
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(connection.Config.DatabaseURI))
 
 	//session, err := mongo.DialWithInfo(info)
 
@@ -308,24 +309,29 @@ func (self *Connection) Open() (err error) {
 	}
 
 	// Check the connection
-	err = client.Ping(ctx.TODO(), nil)
+	ctx, _ = context.WithTimeout(context.Background(), 2*time.Second)
+	err = client.Ping(ctx, readpref.Primary())
 
 	if err != nil {
 		return err
 	}
 
-	self.Session = client
+	connection.Client = client
 
-	//self.Session.SetMode(mongo.Monotonic, true)
 	return nil
 }
 
-//Closes an existing database connection
-func (self *Connection) Close() {
+//Close : Closes an existing database connection
+func (connection *Connection) Close() {
 
-	if self.Session != nil {
-		err = self.Session.Disconnect(context.TODO())
+	if connection.Client != nil {
+		err := connection.Client.Disconnect(context.TODO())
 
-		fmt.Println("Connection to MongoDB closed.")
+		if err != nil {
+			fmt.Println("Error disconecting from MongoDB.")
+		} else {
+			fmt.Println("Connection to MongoDB closed.")
+		}
+
 	}
 }
