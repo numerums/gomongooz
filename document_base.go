@@ -98,8 +98,8 @@ func (base *DocumentBase) Validate(Values ...interface{}) (bool, []error) {
 	return base.DefaultValidate()
 }
 
-func isObjectIdHex(objectIdString string) bool {
-	objectId, err := primitive.ObjectIDFromHex(objectIdString)
+func isObjectIDHex(objectIDString string) bool {
+	_, err := primitive.ObjectIDFromHex(objectIDString)
 	return err == nil
 	/*if(err != nil){
 		return false
@@ -108,13 +108,14 @@ func isObjectIdHex(objectIdString string) bool {
 	}*/
 }
 
-//IsValidId :
-func IsValidId(id primitive.ObjectID) bool {
-	return isObjectIdHex(id.Hex())
+//IsValidID :
+func IsValidID(id primitive.ObjectID) bool {
+	return isObjectIDHex(id.Hex())
 }
 
-func IsDuplicationError(err mongo.WriteError) bool {
-	return err.Code == 11000
+// IsDuplicationError :
+func IsDuplicationError(err error) bool {
+	return strings.Contains(err.Error(), "E11000")
 }
 
 //DefaultValidate :
@@ -251,7 +252,7 @@ func (base *DocumentBase) DefaultValidate() (bool, []error) {
 
 				if len(modelTag) > 0 {
 
-					if !isSet || !isObjectIdHex(stringFieldValue) {
+					if !isSet || !isObjectIDHex(stringFieldValue) {
 
 						base.AppendError(&validationErrors, L("validation.field_invalid_id", validationName))
 					}
@@ -262,9 +263,9 @@ func (base *DocumentBase) DefaultValidate() (bool, []error) {
 
 				for index := 0; index < slice.Len(); index++ {
 
-					if objectIdString, ok := slice.Index(index).Interface().(string); ok {
+					if objectIDString, ok := slice.Index(index).Interface().(string); ok {
 
-						if !isObjectIdHex(objectIdString) {
+						if !isObjectIDHex(objectIDString) {
 							base.AppendError(&validationErrors, L("validation.field_invalid_id", validationName))
 							break
 						}
@@ -279,7 +280,7 @@ func (base *DocumentBase) DefaultValidate() (bool, []error) {
 }
 
 //Update :
-func (base *DocumentBase) Update(content interface{}) (error, map[string]interface{}) {
+func (base *DocumentBase) Update(content interface{}) (map[string]interface{}, error) {
 
 	if contentBytes, ok := content.([]byte); ok {
 
@@ -288,7 +289,7 @@ func (base *DocumentBase) Update(content interface{}) (error, map[string]interfa
 		err := json.Unmarshal(contentBytes, &bufferMap)
 
 		if err != nil {
-			return err, nil
+			return nil, err
 		}
 
 		typeName := strings.ToLower(reflect.TypeOf(base.document).Elem().Name())
@@ -306,21 +307,21 @@ func (base *DocumentBase) Update(content interface{}) (error, map[string]interfa
 			bytes, err := json.Marshal(mapValue)
 
 			if err != nil {
-				return err, nil
+				return nil, err
 			}
 
 			err = json.Unmarshal(bytes, base.document)
 
 			if err != nil {
-				return err, nil
+				return nil, err
 			}
 
 		} else {
 
-			return errors.New("object not wrapped in typename"), nil
+			return nil, errors.New("object not wrapped in typename")
 		}
 
-		return nil, bufferMap
+		return bufferMap, nil
 
 	} else if contentMap, ok := content.(map[string]interface{}); ok {
 
@@ -332,13 +333,13 @@ func (base *DocumentBase) Update(content interface{}) (error, map[string]interfa
 		bytes, err := json.Marshal(contentMap)
 
 		if err != nil {
-			return err, nil
+			return nil, err
 		}
 
 		err = json.Unmarshal(bytes, base.document)
 
 		if err != nil {
-			return err, nil
+			return nil, err
 		}
 
 		return nil, nil
@@ -351,7 +352,7 @@ func (base *DocumentBase) Update(content interface{}) (error, map[string]interfa
 // So you can use bson.M{"deleted":false} in your query to filter those documents.
 func (base *DocumentBase) Delete() error {
 
-	if IsValidId(base.ID) {
+	if IsValidID(base.ID) {
 
 		base.SetDeleted(true)
 
@@ -456,10 +457,11 @@ func (base *DocumentBase) Save() error {
 	 * original session to wait." see: http://godoc.org/labix.org/v2/mongo#Session.Clone
 	 */
 
-	session := base.connection.Client.Clone()
-	defer session.Close()
+	//session := base.connection.Client.Clone()
+	//defer session.Close()
+	session := base.connection.Client
 
-	collection := session.Database(base.connection.Config.DatabaseName).Collection(base.collection.Name)
+	collection := session.Database(base.connection.Config.DatabaseName).Collection(base.collection.Name())
 
 	reflectStruct := reflect.ValueOf(base.document).Elem()
 	fieldType := reflectStruct.Type()
@@ -541,13 +543,13 @@ func (base *DocumentBase) Save() error {
 
 					sliceValue := fieldValue.Index(index)
 
-					err, objectId := base.persistRelation(sliceValue, autoSave)
+					objectID, err := base.persistRelation(sliceValue, autoSave)
 
 					if err != nil {
 						return err
 					}
 
-					idBuffer[index] = objectId
+					idBuffer[index] = objectID
 				}
 
 				/*
@@ -568,13 +570,13 @@ func (base *DocumentBase) Save() error {
 
 				var idBuffer primitive.ObjectID
 
-				err, objectId := base.persistRelation(fieldValue, autoSave)
+				objectID, err := base.persistRelation(fieldValue, autoSave)
 
 				if err != nil {
 					return err
 				}
 
-				idBuffer = objectId
+				idBuffer = objectID
 
 				/*
 				 *	Store the original value and then replace
@@ -602,7 +604,7 @@ func (base *DocumentBase) Save() error {
 	 * 	If yes -> Update object
 	 * 	If no -> Create object
 	 */
-	if len(base.ID) == 0 {
+	if len(base.ID) == 0 { //Create
 
 		base.SetCreatedAt(now)
 		base.SetUpdatedAt(now)
@@ -615,17 +617,19 @@ func (base *DocumentBase) Save() error {
 				err = &DuplicateError{&QueryError{fmt.Sprintf("Duplicate key")}}
 			}
 		} else {
-			base.SetId(res.InsertedID)
+			base.SetId(res.InsertedID.(primitive.ObjectID))
+
 		}
 
-	} else {
+	} else { //Update
 
 		base.SetUpdatedAt(now)
-		_, errs := collection.UpsertId(base.ID, base.document)
+		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		_, errs := collection.ReplaceOne(ctx, bson.M{"_id": base.ID}, base.document)
 
 		if errs != nil {
 
-			if base.IsDup(errs) {
+			if IsDuplicationError(errs) {
 				errs = &DuplicateError{&QueryError{fmt.Sprintf("Duplicate key")}}
 			} else {
 				err = errs
@@ -664,7 +668,7 @@ func (base *DocumentBase) persistRelation(value reflect.Value, autoSave bool) (p
 			objectID := typedValue.GetId()
 
 			//TODO: REFACTOR THIS
-			if !IsValidId(objectID) {
+			if !IsValidID(objectID) {
 				panic("DB: Can not persist the relation object because the child was not saved before (invalid id).")
 			}
 
@@ -675,7 +679,7 @@ func (base *DocumentBase) persistRelation(value reflect.Value, autoSave bool) (p
 	case primitive.ObjectID:
 		{
 			//TODO: REFACTOR THIS
-			if !IsValidId(typedValue) {
+			if !IsValidID(typedValue) {
 				panic("DB: Can not persist the relation object because the child was not saved before (invalid id).")
 			}
 
@@ -684,7 +688,7 @@ func (base *DocumentBase) persistRelation(value reflect.Value, autoSave bool) (p
 
 	case string:
 		{
-			if !isObjectIdHex(typedValue) {
+			if !isObjectIDHex(typedValue) {
 				return primitive.NewObjectID(), &InvalidIdError{&QueryError{fmt.Sprintf("Invalid id`s given")}}
 			}
 

@@ -2,6 +2,7 @@ package gomongooz
 
 import (
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -70,7 +71,7 @@ For example:
 	}
 
 */
-func (self *Model) FindId(id pripitive.ObjectID) *Query {
+func (self *Model) FindId(id primitive.ObjectID) *Query {
 
 	return &Query{
 		collection: self.Collection,
