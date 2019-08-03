@@ -1,8 +1,10 @@
 package gomongooz
 
 import (
+	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -65,8 +67,8 @@ func (self *Query) Skip(skip int) *Query {
 
 //see: http://godoc.org/gopkg.in/mongo.v2#Query.Count
 func (self *Query) Count() (n int, err error) {
-
-	return self.collection.Find(self.query).Count()
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	return self.collection.Find(ctx, self.query).Count()
 }
 
 /*
